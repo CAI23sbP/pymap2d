@@ -1,3 +1,29 @@
+# Add which agent is visibility or not 
+e.g. (in CrowdNav[https://github.com/vita-epfl/CrowdNav])
+```
+        lidar_pos = np.array([robot.px, robot.py, robot.theta], dtype=np.float32)
+        ranges = np.ones((self.n_angles,), dtype=np.float32) * self.max_range
+        angles = np.linspace(self.scan_min_angle,
+                             self.scan_max_angle-self.scan_increment,
+                             self.n_angles) + lidar_pos[2]
+        other_agents = []
+        for i, human in enumerate(humans):
+            pos = np.array([human.px, human.py, human.theta], dtype=np.float32)
+            dist = distances_travelled_in_base_frame[i].astype(np.float32)
+            vel = np.array([human.vx, human.vy], dtype=np.float32)
+            if self.lidar_legs:
+                agent = CSimAgent(pos, dist, vel, type_="legs", radius = self.leg_radius)
+            else:
+                agent = CSimAgent(pos, dist, vel, type_="trunk", radius=human.radius)
+            other_agents.append(agent)
+
+        self.converter_cmap2d.render_agents_in_lidar(ranges, angles, other_agents, lidar_pos[:2])
+
+        which_visible = [agent.get_agent_which_visible() for agent in other_agents]
+
+```
+
+
 # pymap2d
 
 pymap2d is a Cython-based fast toolbox for 2d grid maps.
