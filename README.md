@@ -1,6 +1,11 @@
 # Add which agent is visibility or not 
+
 e.g. (in CrowdNav[https://github.com/vita-epfl/CrowdNav])
+
 ```
+"""
+v1 e.g.
+"""
         lidar_pos = np.array([robot.px, robot.py, robot.theta], dtype=np.float32)
         ranges = np.ones((self.n_angles,), dtype=np.float32) * self.max_range
         angles = np.linspace(self.scan_min_angle,
@@ -19,10 +24,13 @@ e.g. (in CrowdNav[https://github.com/vita-epfl/CrowdNav])
 
         self.converter_cmap2d.render_agents_in_lidar(ranges, angles, other_agents, lidar_pos[:2])
 
-        which_visible = [agent.get_agent_which_visible() for agent in other_agents]
+        which_visible = [agent.get_agent_which_visible() for agent in other_agents] or which_visible = [agent.visible for agent in other_agent]
 
 ```
 
+# Notion 
+
+```get_agent_which_visible``` or ```visible``` must be called after render_agents_in_lidar
 
 # pymap2d
 
