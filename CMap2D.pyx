@@ -1345,7 +1345,14 @@ cdef class CMap2D:
         cdef np.float32_t possible_solution_m
         cdef int indexmin
         cdef int indexmax
+        cdef np.float32_t origin
+        cdef int agent_index
+        agent_index = -1
         for i in range(n_centers):
+            if i % 2 == 0:
+                agent_index += 1
+            agent = agents[agent_index]
+
             r0sq = centers_r_sq[i]
             r0 = np.sqrt(r0sq)
             lmbda = centers_l[i]
@@ -1373,6 +1380,7 @@ cdef class CMap2D:
                     # in this case that ray does not see the agent
                     continue
                 min_solution = ranges[idx] # initialize with scan range
+                origin = ranges[idx]
                 possible_solution = first_term - np.sqrt(sqrt_inner) # in ij units
                 possible_solution_m = possible_solution * self.resolution_ # in meters
                 if possible_solution_m >= 0:
@@ -1381,6 +1389,8 @@ cdef class CMap2D:
                 possible_solution_m = possible_solution * self.resolution_
                 if possible_solution_m >= 0:
                     min_solution = min(min_solution, possible_solution_m)
+                if min_solution < origin:
+                    agent.visible = True 
                 ranges[idx] = min_solution
         return True
 
@@ -1742,8 +1752,9 @@ cdef class CSimAgent:
     cdef public str type
     cdef public np.float32_t[:] state
     cdef public float leg_radius
+    cdef public bool visible
 
-    def __cinit__(self, pose, state, vel, type_="legs", radius=0.03):
+    def __cinit__(self, pose, state, vel, type_="legs", radius=0.03, visible = False):
         """ pose: [px, py, th] in map frame
             state: [Dx, Dy, Dth] 'distance travelled' in each dim
             vel: [vx, vy, w] in map frame
@@ -1755,7 +1766,22 @@ cdef class CSimAgent:
         self.type = type_
         self.state = state
         self.leg_radius = radius # [m]
+        self.visible = visible
+        
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    @cython.nonecheck(False)
+    @cython.cdivision(True)
+    cdef cget_agent_which_visible(self):
+        cdef bool visible
+        visible = self.visible
+        if visible :
+            return True 
+        else:
+            return False 
 
+    def get_agent_which_visible(self):
+        return self.cget_agent_which_visible()
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
