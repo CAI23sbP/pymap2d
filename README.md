@@ -3,9 +3,6 @@
 e.g. (in CrowdNav[https://github.com/vita-epfl/CrowdNav])
 
 ```
-"""
-v1 e.g.
-"""
         lidar_pos = np.array([robot.px, robot.py, robot.theta], dtype=np.float32)
         ranges = np.ones((self.n_angles,), dtype=np.float32) * self.max_range
         angles = np.linspace(self.scan_min_angle,
