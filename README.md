@@ -55,7 +55,7 @@ $ pip install numpy Cython
 ## Installation:
 Inside this project root folder:
 ```
-$ pip install pymap2d
+$ pip3 install -e .
 ```
 
 ## How to
