@@ -49,7 +49,7 @@ It is in dire need of refactoring / documentation. I hope it still proves useful
 
 ## Dependency: Cython
 ```
-$ pip install numpy Cython
+$ pip3 install numpy==1.23.4 Cython==0.29.37
 ```
 
 ## Installation:
