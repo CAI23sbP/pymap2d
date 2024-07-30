@@ -27,7 +27,7 @@ e.g. (in CrowdNav[https://github.com/vita-epfl/CrowdNav])
         flat_contours: np.ndarray,
         distances_travelled_in_base_frame: np.ndarray
         ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[bool]]:
-
+        humans = self.sort_humans(robot,humans)
         lidar_pos = np.array([robot.px, robot.py, robot.theta], dtype=np.float32)
         ranges = np.ones((self.n_angles,), dtype=np.float32) * self.max_range
         angles = np.linspace(self.scan_min_angle,
@@ -55,7 +55,7 @@ e.g. (in CrowdNav[https://github.com/vita-epfl/CrowdNav])
 
 ```get_agent_which_visible``` or ```visible``` must be called after render_agents_in_lidar
 
-```descending order``` must be used before input humans into render_agents_in_lidar
+```sort_humans``` must be used, before input humans into ```render_agents_in_lidar``` (i recommend that you should use ```sort_humans``` human step and human generate function)
 
 # pymap2d
 
