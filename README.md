@@ -1,8 +1,33 @@
 # Add which agent is visibility or not 
+![image](https://github.com/user-attachments/assets/a1bfef5c-02d9-4d1b-b0cd-820a6395f164)
 
 e.g. (in CrowdNav[https://github.com/vita-epfl/CrowdNav])
 
 ```
+
+    def sort_humans(
+        self,
+        robot: Robot,
+        humans: List[Human]
+        ):
+                ## sorting human by descending_order for make Occupancy 
+        distances = []
+        for human in humans:
+            dist = np.linalg.norm([human.px- robot.px, human.py - robot.py])
+            distances.append(dist)
+        descending_order = np.array(distances).argsort()
+        humans = np.array(humans)[descending_order]
+        humans = humans.tolist()
+        return humans 
+
+    def _cb_lidar(
+        self, 
+        robot: Robot, 
+        humans: List[Human,], 
+        flat_contours: np.ndarray,
+        distances_travelled_in_base_frame: np.ndarray
+        ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[bool]]:
+
         lidar_pos = np.array([robot.px, robot.py, robot.theta], dtype=np.float32)
         ranges = np.ones((self.n_angles,), dtype=np.float32) * self.max_range
         angles = np.linspace(self.scan_min_angle,
@@ -22,12 +47,14 @@ e.g. (in CrowdNav[https://github.com/vita-epfl/CrowdNav])
         self.converter_cmap2d.render_agents_in_lidar(ranges, angles, other_agents, lidar_pos[:2])
 
         which_visible = [agent.get_agent_which_visible() for agent in other_agents] or which_visible = [agent.visible for agent in other_agent]
+        return ranges, angles, distances_travelled_in_base_frame, which_visible
 
 ```
 
 # Notion 
 
 ```get_agent_which_visible``` or ```visible``` must be called after render_agents_in_lidar
+``` descending order``` must be used before input humans into render_agents_in_lidar
 
 # pymap2d
 
