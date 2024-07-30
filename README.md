@@ -54,7 +54,8 @@ e.g. (in CrowdNav[https://github.com/vita-epfl/CrowdNav])
 # Notion 
 
 ```get_agent_which_visible``` or ```visible``` must be called after render_agents_in_lidar
-``` descending order``` must be used before input humans into render_agents_in_lidar
+
+```descending order``` must be used before input humans into render_agents_in_lidar
 
 # pymap2d
 
