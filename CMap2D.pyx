@@ -18,6 +18,110 @@ import os
 from yaml import load, SafeLoader
 from matplotlib.pyplot import imread
 
+cdef class LookAheadPlanner:
+    cdef float look_ahead_dist  # look_ahead_dist parameter
+    cdef int last_idx            # last_idx for make subgoal
+    cdef float last_potential
+    cdef float lidar_range
+    cdef list last_point
+
+    def __init__(self, float look_ahead_dist = 3.0, lidar_range = 5.0):
+        self.look_ahead_dist = look_ahead_dist
+        self.last_idx = 0
+        self.last_potential = 0
+        self.lidar_range = lidar_range
+        self.last_point = [0, 0]
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    @cython.nonecheck(False)
+    @cython.cdivision(True)
+    cdef np.ndarray[np.float32_t, ndim=1] cgetPoint(self, np.ndarray[np.float32_t, ndim=2] path,  int idx):
+        cdef np.ndarray[np.float32_t, ndim=1] point_array = np.zeros(2, dtype=np.float32)
+        point_array[0] = path[idx, 0]
+        point_array[1] = path[idx, 1]
+        return point_array
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    @cython.nonecheck(False)
+    @cython.cdivision(True)
+    cdef float cgetDistance(self, np.ndarray[np.float32_t, ndim=1] p1, np.ndarray[np.float32_t, ndim=1] p2):
+        cdef float dx = p1[0] - p2[0]
+        cdef float dy = p1[1] - p2[1]
+        return np.hypot(dx, dy)
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    @cython.nonecheck(False)
+    @cython.cdivision(True)
+    cdef np.ndarray[np.float32_t, ndim=1] cgetTargetPoint(
+        self, 
+        np.ndarray[np.float32_t, ndim=2] path, 
+        np.ndarray[np.float32_t, ndim=1] pos, 
+        np.ndarray[np.float32_t, ndim=1] goal, 
+        ):
+        cdef int target_idx = self.last_idx
+        cdef np.ndarray[np.float32_t, ndim=1] target_point
+
+        target_point = self.cgetPoint(path, target_idx)
+
+        curr_dist = self.cgetDistance(pos, target_point)
+
+        potential = self.cgetDistance(pos, goal)
+
+
+        print(self.last_potential >= potential)
+        if self.last_potential >= potential: 
+            # last is bigger than current -> forward to global goal
+
+            if curr_dist >= self.lidar_range:
+                "if robot can't see subgoal, calling last subgoal"
+                target_point[0] = self.last_point[0]
+                target_point[1] = self.last_point[1]
+
+            else:
+                while curr_dist < self.look_ahead_dist and target_idx < path.shape[0] - 1:
+                    target_idx += 1
+                    target_point = self.cgetPoint(path, target_idx)
+                    curr_dist = self.cgetDistance(pos, target_point)
+                self.last_point = target_point.tolist()
+            
+        else:
+            # move far from global goal (backward) 
+            if curr_dist >= self.lidar_range:
+                "if robot can't see subgoal, calling last subgoal"
+                target_point[0] = self.last_point[0]
+                target_point[1] = self.last_point[1]
+
+            #else:
+                #while target_idx > 0 :
+                 #   target_idx -= 1
+                 #   target_point = self.cgetPoint(path, target_idx)
+                 #   curr_dist = self.cgetDistance(pos, target_point)
+                 #   if curr_dist < self.look_ahead_dist:
+                   #     break
+                # self.last_point = target_point.tolist()
+
+        target_point[0] = self.last_point[0]
+        target_point[1] = self.last_point[1]        
+        self.last_idx = target_idx
+        self.last_potential = potential
+        return target_point
+
+    def get_sub_goal(self, 
+        np.ndarray[np.float32_t, ndim=2] path, 
+        np.ndarray[np.float32_t, ndim=1] position, 
+        np.ndarray[np.float32_t, ndim=1] goal, 
+        ):
+        
+        return self.cgetTargetPoint(path, position, goal)
+
+    def reset_target_idx(self):
+        self.last_idx = 0
+        self.last_potential = 0
+        self.last_point = [0.0, 0.0]  
+
 
 def gridshow(*args, **kwargs):
     """ utility function for showing 2d grids in matplotlib,
@@ -859,6 +963,11 @@ cdef class CMap2D:
             open_[currenti, currentj] = 0
         return tentative
 
+
+    def subgoal(self, path: np.ndarray, position: np.ndarray, velocities: np.ndarray):
+        return self.csubgoal(path , position, velocities)
+
+
     def dijkstra(self, goal_ij, mask=None, extra_costs=None, inv_value=None, connectedness=8):
         """ 4, 8, 16, or 32 connected dijkstra
 
@@ -1035,7 +1144,7 @@ cdef class CMap2D:
         radii_ij = [np.inf]
         for agent in agents:
             if agent.type != "legs":
-                raise NotImplementedError
+               raise NotImplementedError
             left_leg_pose2d_in_map_frame, right_leg_pose2d_in_map_frame = agent.get_legs_pose2d_in_map()
             llc_ij = self.xy_to_floatij(left_leg_pose2d_in_map_frame[None,:2], clip_if_outside=False)[0]
             rlc_ij = self.xy_to_floatij(right_leg_pose2d_in_map_frame[None,:2], clip_if_outside=False)[0]
@@ -1249,7 +1358,6 @@ cdef class CMap2D:
 
     def render_agents_in_lidar(self, ranges, angles, agents, lidar_ij):
         if not self.crender_agents_in_lidar(ranges, angles.astype(np.float32), agents, lidar_ij.astype(np.float32)):
-#             print("in rendering agents, object too close for efficient solution")
             self.old_render_agents_in_lidar(ranges, angles, agents, lidar_ij)
 
     @cython.boundscheck(False)
@@ -1282,6 +1390,7 @@ cdef class CMap2D:
         cdef int i1 = 0
         cdef int i2 = 0
         cdef np.float32_t leg_radius_ij
+
         for n in range(len(agents)):
             agent = agents[n]
             cagent = CSimAgent(agent.pose_2d_in_map_frame, agent.state, agent.vel_in_map_frame,
@@ -1305,22 +1414,10 @@ cdef class CMap2D:
             centers_l[i1] = np.arctan2(centers_j[i1], centers_i[i1])
             centers_r_sq[i2] = centers_i[i2]**2 + centers_j[i2]**2
             centers_l[i2] = np.arctan2(centers_j[i2], centers_i[i2])
-        # Circle in polar coord: r^2 - 2*r*r0*cos(phi-lambda) + r0^2 = R^2
-        # Solve equation for r at angle phi in polar coordinates, of circle of center (r0, lambda)
-        # and radius R. -> 2 solutions for r knowing r0, phi, lambda, R:
-        # r = r0*cos(phi-lambda) - sqrt( r0^2*cos^2(phi-lambda) - r0^2 + R^2 )
-        # r = r0*cos(phi-lambda) + sqrt( r0^2*cos^2(phi-lambda) - r0^2 + R^2 )
-        # solutions are real only if term inside sqrt is > 0
         for i in range(n_centers):
             # if an object is too close, this will not be efficient, tell the caller to switch to numpy
             if centers_r_sq[i] == 0 or centers_r_sq[i] < radii_ij[i]**2:
                 return False
-        # we can first check at what angles this holds.
-        # there should be two extrema for the circle in phi, which are solutions for:
-        # r0^2*cos^2(phi-lambda) - r0^2 + R^2 = 0
-        # the two solutions are:
-        # phi = lambda + 2*pi*n +- arccos( +- sqrt(r0^2 - R^2) / r0 )
-        # these exist only if r0 > R and r0 != 0
         cdef np.float32_t angle_min = angles[0]
         cdef np.float32_t angle_max = angles[len(angles)-1]
         cdef np.float32_t angle_inc = angles[1] - angle_min
@@ -1345,14 +1442,14 @@ cdef class CMap2D:
         cdef np.float32_t possible_solution_m
         cdef int indexmin
         cdef int indexmax
-        cdef np.float32_t origin
         cdef int agent_index
+        cdef list ignore_list = []
+
         agent_index = -1
         for i in range(n_centers):
             if i % 2 == 0:
                 agent_index += 1
             agent = agents[agent_index]
-
             r0sq = centers_r_sq[i]
             r0 = np.sqrt(r0sq)
             lmbda = centers_l[i]
@@ -1366,32 +1463,45 @@ cdef class CMap2D:
             if phimax < angle_min:
                 phimin = phimin + np.pi * 2
                 phimax = phimax + np.pi * 2
+
             # if still outside the scan, our agent is not visible
             if phimax < angle_min or phimin > angle_max:
                 continue
+            
             # find the index for the first visible circle point in the scan
             indexmin = int( ( max(phimin, angle_min) - angle_min ) // angle_inc )
             indexmax = int( ( min(phimax, angle_max) - angle_min ) // angle_inc )
+
+            for idx in range(indexmin, indexmax+1):
+                ignore_list.append(idx-indexmin+1)
+
             for idx in range(indexmin, indexmax+1):
                 phi = angles[idx]
                 first_term = r0 * np.cos(phi - lmbda)
                 sqrt_inner = r0sq * np.cos(phi - lmbda)**2 - r0sq + R**2
+
                 if sqrt_inner < 0:
-                    # in this case that ray does not see the agent
                     continue
+                
                 min_solution = ranges[idx] # initialize with scan range
-                origin = ranges[idx]
                 possible_solution = first_term - np.sqrt(sqrt_inner) # in ij units
                 possible_solution_m = possible_solution * self.resolution_ # in meters
                 if possible_solution_m >= 0:
                     min_solution = min(min_solution, possible_solution_m)
+                
                 possible_solution = first_term + np.sqrt(sqrt_inner)
                 possible_solution_m = possible_solution * self.resolution_
                 if possible_solution_m >= 0:
                     min_solution = min(min_solution, possible_solution_m)
-                if min_solution < origin:
-                    agent.visible = True 
+                if min_solution < ranges[idx]: # ignoring small indx range -> can't detect which is human's leg or not
+                    if i % 2 == 0:
+                        agent.even_visible = True 
+                    else:
+                        agent.ood_visible = True 
+
                 ranges[idx] = min_solution
+            ignore_list.clear()
+
         return True
 
     def visibility_map(self, observer_ij, fov=None):
@@ -1752,9 +1862,10 @@ cdef class CSimAgent:
     cdef public str type
     cdef public np.float32_t[:] state
     cdef public float leg_radius
-    cdef public bool visible
+    cdef public bool even_visible
+    cdef public bool ood_visible
 
-    def __cinit__(self, pose, state, vel, type_="legs", radius=0.03, visible = False):
+    def __cinit__(self, pose, state, vel, type_="legs", radius=0.03, even_visible = False, ood_visible = False ):
         """ pose: [px, py, th] in map frame
             state: [Dx, Dy, Dth] 'distance travelled' in each dim
             vel: [vx, vy, w] in map frame
@@ -1766,16 +1877,20 @@ cdef class CSimAgent:
         self.type = type_
         self.state = state
         self.leg_radius = radius # [m]
-        self.visible = visible
-        
+        self.even_visible = even_visible 
+        self.ood_visible = ood_visible 
+
     @cython.boundscheck(False)
     @cython.wraparound(False)
     @cython.nonecheck(False)
     @cython.cdivision(True)
     cdef cget_agent_which_visible(self):
-        cdef bool visible
-        visible = self.visible
-        if visible :
+        cdef bool even_visible
+        cdef bool ood_visible
+        even_visible = self.even_visible
+        ood_visible = self.ood_visible
+
+        if even_visible or ood_visible:
             return True 
         else:
             return False 
@@ -1812,7 +1927,7 @@ cdef class CSimAgent:
             vel_norm = csqrt(self.vel_in_map_frame[0]**2 + self.vel_in_map_frame[1]**2)
             leg_radius = self.leg_radius # [m]
             leg_side_offset = 0.1 # [m]
-            leg_side_amplitude = 0.1 # [m] half amplitude
+            leg_side_amplitude = 0.1# [m] half amplitude
             leg_front_amplitude = max(0.01, min(0.3, # [m]
                                                 0.3 * vel_norm / 0.5))
             # get position of each leg w.r.t agent (x is 'forward')
@@ -2269,6 +2384,5 @@ cdef cfast_3f_clip(double[:] vec3f, double[:] min3f, double[:] max3f, double[:] 
     for i in range(3):
         result[i] = max(result[i], min3f[i])
         result[i] = min(result[i], max3f[i])
-
 
 
