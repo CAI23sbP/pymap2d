@@ -91,6 +91,7 @@ class MYClass():
         goal = np.array([robot.gx, robot.gy], dtype = np.float32)
         sub_goal = self.look_ahead_planner.get_sub_goal(path, position, goal)
         return sub_goal
+    
 
 ```
 
