@@ -1,9 +1,15 @@
-# Add which agent is visibility or not 
-![image](https://github.com/user-attachments/assets/a1bfef5c-02d9-4d1b-b0cd-820a6395f164)
+### 1. Add which agent is visibility or not ###
+
+<p align="center">
+<img src="https://github.com/user-attachments/assets/a1bfef5c-02d9-4d1b-b0cd-820a6395f164"  width="300" height="300"/>
+</p>
 
 e.g. (in CrowdNav[https://github.com/vita-epfl/CrowdNav])
 
 ```
+class MYClass():
+    def __init__(self):
+        pass
 
     def sort_humans(
         self,
@@ -51,11 +57,44 @@ e.g. (in CrowdNav[https://github.com/vita-epfl/CrowdNav])
 
 ```
 
-# Notion 
+#### Notion #### 
 
 ```get_agent_which_visible``` or ```visible``` must be called after render_agents_in_lidar
 
 ```sort_humans``` must be used, before input humans into ```render_agents_in_lidar``` (i recommend that you should use ```sort_humans``` human step and human generate function)
+
+
+### 2. Add subgoal planner (Called Look-Ahead-Planner) ###
+
+
+https://github.com/user-attachments/assets/0761f935-bbdc-4cf7-8f5f-7f2a6ecb1cd9
+
+e.g. (in CrowdNav[https://github.com/vita-epfl/CrowdNav])
+
+```
+class MYClass():
+    def __init__(self):
+        self.look_ahead_planner = LookAheadPlanner(look_ahead_dist = 2.5)
+
+    def reset_observation(
+        self, 
+        robot: Robot,
+        sim_map: Map
+        )-> Tuple[Dict[str, Any], np.ndarray]:
+        path = self._cb_path(robot, sim_map)
+        self.look_ahead_planner.reset_target_idx()
+        sub_goal = self._cb_subgoal(robot, path)
+        return sub_goal, path
+    
+    def _cb_subgoal(self, robot: Robot, path:np.ndarray):
+        position = np.array([robot.px, robot.py], dtype = np.float32)
+        goal = np.array([robot.gx, robot.gy], dtype = np.float32)
+        sub_goal = self.look_ahead_planner.get_sub_goal(path, position, goal)
+        return sub_goal
+
+```
+
+
 
 # pymap2d
 
