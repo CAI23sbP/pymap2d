@@ -65,13 +65,10 @@ cdef class LookAheadPlanner:
         cdef np.ndarray[np.float32_t, ndim=1] target_point
 
         target_point = self.cgetPoint(path, target_idx)
-
         curr_dist = self.cgetDistance(pos, target_point)
-
         potential = self.cgetDistance(pos, goal)
 
 
-        print(self.last_potential >= potential)
         if self.last_potential >= potential: 
             # last is bigger than current -> forward to global goal
 
