@@ -74,7 +74,7 @@ e.g. (in CrowdNav[https://github.com/vita-epfl/CrowdNav])
 ```
 class MYClass():
     def __init__(self):
-        self.look_ahead_planner = LookAheadPlanner(look_ahead_dist = 2.5)
+        self.look_ahead_planner = LookAheadPlanner(look_ahead_dist = 2.5, lidar_range = 5.0)
 
     def reset_observation(
         self, 
