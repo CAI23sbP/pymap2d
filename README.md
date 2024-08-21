@@ -64,33 +64,19 @@ class MYClass():
 ```sort_humans``` must be used, before input humans into ```render_agents_in_lidar``` (i recommend that you should use ```sort_humans``` human step and human generate function)
 
 
-### 2. Add subgoal planner (Called Look-Ahead-Planner) ###
+### 2. Add subgoal planner (Called Pure-Pursuit) ###
 
 
-https://github.com/user-attachments/assets/0761f935-bbdc-4cf7-8f5f-7f2a6ecb1cd9
 
-e.g. (in CrowdNav[https://github.com/vita-epfl/CrowdNav])
-
-```
 class MYClass():
     def __init__(self):
-        self.look_ahead_planner = LookAheadPlanner(look_ahead_dist = 2.5, lidar_range = 5.0)
+        self.look_ahead_planner = LookAheadPlanner(look_ahead_dist = 2.5)
 
-    def reset_observation(
-        self, 
-        robot: Robot,
-        sim_map: Map
-        )-> Tuple[Dict[str, Any], np.ndarray]:
-        path = self._cb_path(robot, sim_map)
-        self.look_ahead_planner.reset_target_idx()
-        sub_goal = self._cb_subgoal(robot, path)
-        return sub_goal, path
-    
     def _cb_subgoal(self, robot: Robot, path:np.ndarray):
+        path = path.astype(np.float32)
         position = np.array([robot.px, robot.py], dtype = np.float32)
-        goal = np.array([robot.gx, robot.gy], dtype = np.float32)
-        sub_goal = self.look_ahead_planner.get_sub_goal(path, position, goal)
-        return sub_goal
+        sub_goal = self.look_ahead_planner.find_subgoal(path, position)
+        return sub_goal 
     
 
 ```
