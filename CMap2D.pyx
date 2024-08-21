@@ -18,106 +18,114 @@ import os
 from yaml import load, SafeLoader
 from matplotlib.pyplot import imread
 
-cdef class LookAheadPlanner:
-    cdef float look_ahead_dist  # look_ahead_dist parameter
-    cdef int last_idx            # last_idx for make subgoal
-    cdef float last_potential
-    cdef float lidar_range
-    cdef list last_point
 
-    def __init__(self, float look_ahead_dist = 3.0, lidar_range = 5.0):
+cdef class PurePursuit:
+    cdef float look_ahead_dist  
+
+    def __init__(self, float look_ahead_dist = 3.0):
         self.look_ahead_dist = look_ahead_dist
-        self.last_idx = 0
-        self.last_potential = 0
-        self.lidar_range = lidar_range
-        self.last_point = [0, 0]
+
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
     @cython.nonecheck(False)
     @cython.cdivision(True)
-    cdef np.ndarray[np.float32_t, ndim=1] cgetPoint(self, np.ndarray[np.float32_t, ndim=2] path,  int idx):
-        cdef np.ndarray[np.float32_t, ndim=1] point_array = np.zeros(2, dtype=np.float32)
-        point_array[0] = path[idx, 0]
-        point_array[1] = path[idx, 1]
-        return point_array
+    cdef cfind_closest_point(
+        self,
+        np.ndarray[np.float32_t, ndim=2] path,
+        np.ndarray[np.float32_t, ndim=1] x,
+        int seg
+            ):
+            
+        cdef np.ndarray[np.float32_t, ndim=1] pt_min = np.array([np.nan, np.nan], dtype=np.float32)
+        cdef np.ndarray[np.float32_t, ndim=1] p_start = np.zeros(2, dtype=np.float32)
+        cdef np.ndarray[np.float32_t, ndim=1] p_end = np.zeros(2, dtype=np.float32)
+        cdef np.ndarray[np.float32_t, ndim=1] v = np.zeros(2, dtype=np.float32)
+        cdef np.float32_t dist_min = np.float32(np.inf)
+        cdef int seg_min = -1
+
+        cdef int path_len = path.shape[0]
+
+        if seg == -1:
+            for i in range(path_len - 1):
+                pt, dist, s = self.cfind_closest_point(path, x, i)
+                if dist < dist_min:
+                    pt_min = pt
+                    dist_min = dist
+                    seg_min = s
+        else:
+            p_start[0], p_start[1] = path[seg, 0], path[seg, 1]
+            p_end[0], p_end[1] = path[seg + 1, 0], path[seg + 1, 1]
+            v = p_end - p_start
+            length_seg = np.linalg.norm(v)
+            #if length_seg > 0:
+            v /= length_seg  
+            dist_projected = np.dot(x - p_start, v)
+
+            if dist_projected < 0.:
+                pt_min = p_start
+            elif dist_projected > length_seg:
+                pt_min = p_end
+            else:
+                pt_min = p_start + dist_projected * v
+
+            dist_min = np.linalg.norm(pt_min - x)
+            seg_min = seg
+        return pt_min, dist_min, seg_min
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
     @cython.nonecheck(False)
     @cython.cdivision(True)
-    cdef float cgetDistance(self, np.ndarray[np.float32_t, ndim=1] p1, np.ndarray[np.float32_t, ndim=1] p2):
-        cdef float dx = p1[0] - p2[0]
-        cdef float dy = p1[1] - p2[1]
-        return np.hypot(dx, dy)
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    @cython.nonecheck(False)
-    @cython.cdivision(True)
-    cdef np.ndarray[np.float32_t, ndim=1] cgetTargetPoint(
+    cdef cfind_subgoal(
         self, 
         np.ndarray[np.float32_t, ndim=2] path, 
-        np.ndarray[np.float32_t, ndim=1] pos, 
-        np.ndarray[np.float32_t, ndim=1] goal, 
+        np.ndarray[np.float32_t, ndim=1] x, 
+        np.ndarray[np.float32_t, ndim=1] pt, 
+        np.float32_t dist, 
+        int seg
         ):
-        cdef int target_idx = self.last_idx
-        cdef np.ndarray[np.float32_t, ndim=1] target_point
-
-        target_point = self.cgetPoint(path, target_idx)
-        curr_dist = self.cgetDistance(pos, target_point)
-        potential = self.cgetDistance(pos, goal)
-
-
-        if self.last_potential >= potential: 
-            # last is bigger than current -> forward to global goal
-
-            if curr_dist >= self.lidar_range:
-                "if robot can't see subgoal, calling last subgoal"
-                target_point[0] = self.last_point[0]
-                target_point[1] = self.last_point[1]
-
-            else:
-                while curr_dist < self.look_ahead_dist and target_idx < path.shape[0] - 1:
-                    target_idx += 1
-                    target_point = self.cgetPoint(path, target_idx)
-                    curr_dist = self.cgetDistance(pos, target_point)
-                self.last_point = target_point.tolist()
-            
-        else:
-            # move far from global goal (backward) 
-            if curr_dist >= self.lidar_range:
-                "if robot can't see subgoal, calling last subgoal"
-                target_point[0] = self.last_point[0]
-                target_point[1] = self.last_point[1]
-
-            #else:
-                #while target_idx > 0 :
-                 #   target_idx -= 1
-                 #   target_point = self.cgetPoint(path, target_idx)
-                 #   curr_dist = self.cgetDistance(pos, target_point)
-                 #   if curr_dist < self.look_ahead_dist:
-                   #     break
-                # self.last_point = target_point.tolist()
-
-        target_point[0] = self.last_point[0]
-        target_point[1] = self.last_point[1]        
-        self.last_idx = target_idx
-        self.last_potential = potential
-        return target_point
-
-    def get_sub_goal(self, 
-        np.ndarray[np.float32_t, ndim=2] path, 
-        np.ndarray[np.float32_t, ndim=1] position, 
-        np.ndarray[np.float32_t, ndim=1] goal, 
-        ):
+        cdef int seg_max = path.shape[0] - 2
+        cdef np.ndarray[np.float32_t, ndim=1] goal = np.zeros(2, dtype=np.float32)
+        cdef np.ndarray[np.float32_t, ndim=1] p_end = np.zeros(2, dtype=np.float32)
+        cdef np.ndarray[np.float32_t, ndim=1] p_start = np.zeros(2, dtype=np.float32)
+        cdef np.ndarray[np.float32_t, ndim=1] v = np.zeros(2, dtype=np.float32)
+        cdef np.float32_t length_seg
+        cdef np.float32_t dist_end
+        cdef np.float32_t dist_projected_x
+        cdef np.float32_t dist_projected_y
         
-        return self.cgetTargetPoint(path, position, goal)
+        if dist > self.look_ahead_dist:
+            goal = pt
+        else:
+            p_end[0], p_end[1] = path[seg+1, 0], path[seg+1, 1]
+            dist_end = np.linalg.norm(x - p_end) 
 
-    def reset_target_idx(self):
-        self.last_idx = 0
-        self.last_potential = 0
-        self.last_point = [0.0, 0.0]  
+            while dist_end < self.look_ahead_dist and seg < seg_max:
+                seg += 1
+                p_end[0], p_end[1] = path[seg+1, 0], path[seg+1, 1]
+                dist_end = np.linalg.norm(x - p_end)
+
+            if dist_end < self.look_ahead_dist: 
+                goal[0], goal[1] = path[seg_max+1, 0], path[seg_max+1, 1]
+
+            else: 
+                pt, dist, seg = self.cfind_closest_point(path, x, seg)
+                p_start[0], p_start[1] = path[seg, 0], path[seg, 1]
+                p_end[0], p_end[1] = path[seg+1, 0], path[seg+1, 1]
+                v = p_end - p_start
+                length_seg = np.linalg.norm(v)
+                v = v / length_seg
+                dist_projected_x = np.dot(x - pt, v)
+                dist_projected_y = np.linalg.norm(np.cross(x - pt, v))
+                goal = pt + (np.sqrt(self.look_ahead_dist**2 - dist_projected_y**2) + dist_projected_x) * v
+            
+        return goal
+
+    def find_subgoal(self, path, x):
+        pt, dist, seg = self.cfind_closest_point(path, x, -1)
+        goal = self.cfind_subgoal(path, x, pt, dist, seg)
+        return goal
 
 
 def gridshow(*args, **kwargs):
