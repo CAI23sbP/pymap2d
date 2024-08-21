@@ -1,3 +1,9 @@
+# This forks
+
+1. appended which human is visible or not
+2. appended Pure-Pursuit (reference code: [repo](https://github.com/TempleRAIL/drl_vo_nav) )
+
+
 ### 1. Add which agent is visibility or not ###
 
 <p align="center">
@@ -67,7 +73,7 @@ class MYClass():
 ### 2. Add subgoal planner (Called Pure-Pursuit) ###
 
 
-
+```
 class MYClass():
     def __init__(self):
         self.look_ahead_planner = LookAheadPlanner(look_ahead_dist = 2.5)
