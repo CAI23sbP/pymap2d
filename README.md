@@ -2,7 +2,7 @@
 
 1. appended which human is visible or not
 2. appended Pure-Pursuit (reference code: [repo](https://github.com/TempleRAIL/drl_vo_nav) )
-
+3. appended Occupancy grid map (reference code: [repo](https://github.com/AtsushiSakai/PythonRobotics) )
 
 ### 1. Add which agent is visibility or not ###
 
@@ -83,10 +83,25 @@ class MYClass():
         position = np.array([robot.px, robot.py], dtype = np.float32)
         sub_goal = self.look_ahead_planner.find_subgoal(path, position)
         return sub_goal 
-    
+```
+### 3. Add Occupancy Grid Map (Local Map)
+
+https://github.com/user-attachments/assets/8fe799e6-d9a7-45b4-9c92-52fe628cb997
 
 ```
+class MYClass():
+    def __init__(self):
+        self.occ_map = OccupancyGridMap(xy_resolution = 0.05, map_size = 11.2)
 
+    def lidar_to_occ(self, ranges: np.ndarray, angles: np.ndarray) -> np.ndarray:
+        occ = self.occ_map.generate_ray_casting_grid_map(ranges.astype(np.double), angles.astype(np.double))
+        return occ
+
+    def visualize_occ(self, ranges: np.ndarray , angles: np.ndarray) -> np.ndarray:
+        occ = self.lidar_to_occ(ranges, angles)
+        cv2.imshow('occ_map', occ)
+        cv2.waitkey(1)
+```
 
 
 # pymap2d
