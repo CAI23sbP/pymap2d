@@ -1,4 +1,3 @@
-# distutils: language=c++
 
 from libcpp cimport bool
 from libcpp.queue cimport priority_queue as cpp_priority_queue
@@ -17,6 +16,182 @@ from libc.math cimport floor as cfloor
 import os
 from yaml import load, SafeLoader
 from matplotlib.pyplot import imread
+import numpy as np
+
+
+EXTEND_AREA = 1.0
+cdef class OccupancyGridMap:
+    cdef double xy_resolution  
+    cdef double map_size  
+
+    def __init__(self, double xy_resolution = 0.05, map_size = 11.2 ):
+        self.xy_resolution = xy_resolution
+        self.map_size = map_size
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef np.ndarray[int, ndim=2] bresenham(self, tuple start, tuple end):
+        cdef:
+            int x1, y1, x2, y2, dx, dy, y_step, error, x, y
+            bint is_steep, swapped
+            list points = []
+            np.ndarray[int, ndim=2] points_arr
+
+        x1, y1 = start
+        x2, y2 = end
+        dx = x2 - x1
+        dy = y2 - y1
+        is_steep = abs(dy) > abs(dx)
+
+        if is_steep:
+            x1, y1 = y1, x1
+            x2, y2 = y2, x2
+
+        swapped = False
+        if x1 > x2:
+            x1, x2 = x2, x1
+            y1, y2 = y2, y1
+            swapped = True
+
+        dx = x2 - x1
+        dy = y2 - y1
+        error = dx // 2
+        y_step = 1 if y1 < y2 else -1
+        y = y1
+
+        for x in range(x1, x2 + 1):
+            coord = (y, x) if is_steep else (x, y)
+            points.append(coord)
+            error -= abs(dy)
+            if error < 0:
+                y += y_step
+                error += dx
+
+        if swapped:
+            points.reverse()
+
+        points_arr = np.array(points, dtype=np.int32)
+        return points_arr
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef calc_grid_map_config(self):
+        cdef:
+            double min_x, min_y, max_x, max_y
+            int xw, yw
+
+        min_x = -self.map_size/ 2.0
+        min_y = -self.map_size/ 2.0
+        max_x = self.map_size/ 2.0
+        max_y = self.map_size/ 2.0
+        xw = int(round((max_x - min_x) / self.xy_resolution))
+        yw = int(round((max_y - min_y) / self.xy_resolution))
+
+        return min_x, min_y, xw, yw
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef np.ndarray[double, ndim=2] init_flood_fill(self,
+                                                    np.ndarray[int, ndim=1] center_point, 
+                                                    np.ndarray[double, ndim=2] obstacle_points, 
+                                                    np.ndarray[int, ndim=1] xy_points, 
+                                                    np.ndarray[double, ndim=1] min_coord, 
+                                                   ):
+        cdef:
+            int center_x, center_y, prev_ix, prev_iy, ix, iy
+            int xw, yw, i
+            double x, y
+            np.ndarray[double, ndim=2] occupancy_map
+            np.ndarray[int, ndim=2] free_area
+
+        center_x, center_y = center_point[0], center_point[1]
+        prev_ix, prev_iy = center_x - 1, center_y
+        ox, oy = obstacle_points[:,0], obstacle_points[:, 1]
+        xw, yw = xy_points[0], xy_points[1]
+        min_x, min_y = min_coord[0], min_coord[1]
+
+        occupancy_map = np.ones((xw, yw), dtype=np.float64) * 0.5
+
+        for i in range(len(ox)):
+            x = ox[i]
+            y = oy[i]
+            ix = int(round((x - min_x) / self.xy_resolution))
+            iy = int(round((y - min_y) / self.xy_resolution))
+            free_area = self.bresenham((prev_ix, prev_iy), (ix, iy))
+            for fa in free_area:
+                occupancy_map[fa[0], fa[1]] = 0.0
+            prev_ix, prev_iy = ix, iy
+
+        return occupancy_map
+
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef void flood_fill(self, tuple center_point, np.ndarray[double, ndim=2] occupancy_map):
+        cdef:
+            int sx, sy, nx, ny
+            tuple n
+            list fringe
+
+        sx, sy = occupancy_map.shape[0] , occupancy_map.shape[1] 
+        fringe = []
+        fringe.append(center_point)
+
+        while fringe:
+            n = fringe.pop()
+            nx, ny = n
+
+            if nx > 0 and occupancy_map[nx - 1, ny] == 0.5:
+                occupancy_map[nx - 1, ny] = 0.0
+                fringe.append((nx - 1, ny))
+
+            if nx < sx - 1 and occupancy_map[nx + 1, ny] == 0.5:
+                occupancy_map[nx + 1, ny] = 0.0
+                fringe.append((nx + 1, ny))
+
+            if ny > 0 and occupancy_map[nx, ny - 1] == 0.5:
+                occupancy_map[nx, ny - 1] = 0.0
+                fringe.append((nx, ny - 1))
+
+            if ny < sy - 1 and occupancy_map[nx, ny + 1] == 0.5:
+                occupancy_map[nx, ny + 1] = 0.0
+                fringe.append((nx, ny + 1))
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cpdef generate_ray_casting_grid_map(self, np.ndarray[double, ndim=1] ranges, np.ndarray[double, ndim=1] angles):
+        cdef:
+            double min_x, min_y, max_x, max_y
+            int x_w, y_w, ix, iy
+            np.ndarray[double, ndim=2] occupancy_map
+            int center_x, center_y
+            np.ndarray[double, ndim=1] ox = ranges * np.cos(angles)
+            np.ndarray[double, ndim=1] oy = ranges * np.sin(angles)
+
+        min_x, min_y, x_w, y_w = self.calc_grid_map_config()
+
+        occupancy_map = np.ones((x_w, y_w), dtype=np.float64) / 2
+        center_x = int(round(-min_x / self.xy_resolution))
+        center_y = int(round(-min_y / self.xy_resolution))
+        cdef np.ndarray[int, ndim=1] center_point = np.array([center_x, center_y], dtype=np.int32)
+        cdef np.ndarray[int, ndim=1] xy_points = np.array([x_w, y_w], dtype=np.int32)
+        cdef np.ndarray[double, ndim=1] min_coord = np.array([min_x, min_y], dtype=np.float64)
+        cdef np.ndarray[double, ndim=2] obstacle_points = np.concatenate([ox[:,None], oy[:,None]], axis = -1, dtype=np.double)
+
+        occupancy_map = self.init_flood_fill(center_point, obstacle_points, xy_points, min_coord)
+        self.flood_fill((center_x, center_y), occupancy_map)
+        occupancy_map = np.array(occupancy_map, dtype=np.float64)
+        for i in range(len(ox)):
+            x, y = ox[i], oy[i]
+            ix = int(round((x - min_x) / self.xy_resolution))
+            iy = int(round((y - min_y) / self.xy_resolution))
+            occupancy_map[ix, iy] = 1.0
+            occupancy_map[ix + 1, iy] = 1.0
+            occupancy_map[ix, iy + 1] = 1.0
+            occupancy_map[ix + 1, iy + 1] = 1.0
+
+        return occupancy_map
+
 
 
 cdef class PurePursuit:
