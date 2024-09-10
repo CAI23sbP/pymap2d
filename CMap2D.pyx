@@ -1,3 +1,4 @@
+# distutils: language=c++
 
 from libcpp cimport bool
 from libcpp.queue cimport priority_queue as cpp_priority_queue
@@ -12,6 +13,7 @@ from libc.math cimport sin as csin
 from libc.math cimport acos as cacos
 from libc.math cimport sqrt as csqrt
 from libc.math cimport floor as cfloor
+from cython.parallel import prange
 
 import os
 from yaml import load, SafeLoader
@@ -19,7 +21,6 @@ from matplotlib.pyplot import imread
 import numpy as np
 
 
-EXTEND_AREA = 1.0
 cdef class OccupancyGridMap:
     cdef double xy_resolution  
     cdef double map_size  
@@ -301,7 +302,6 @@ cdef class PurePursuit:
         pt, dist, seg = self.cfind_closest_point(path, x, -1)
         goal = self.cfind_subgoal(path, x, pt, dist, seg)
         return goal
-
 
 def gridshow(*args, **kwargs):
     """ utility function for showing 2d grids in matplotlib,
@@ -1008,8 +1008,6 @@ cdef class CMap2D:
             norm_dir[1] = norm_dir[1] / norm
 
 
-
-
     def fastmarch(self, goal_ij, mask=None, speeds=None):
         """
 
@@ -1142,11 +1140,6 @@ cdef class CMap2D:
             # Close the current node
             open_[currenti, currentj] = 0
         return tentative
-
-
-    def subgoal(self, path: np.ndarray, position: np.ndarray, velocities: np.ndarray):
-        return self.csubgoal(path , position, velocities)
-
 
     def dijkstra(self, goal_ij, mask=None, extra_costs=None, inv_value=None, connectedness=8):
         """ 4, 8, 16, or 32 connected dijkstra
@@ -1623,7 +1616,6 @@ cdef class CMap2D:
         cdef int indexmin
         cdef int indexmax
         cdef int agent_index
-        cdef list ignore_list = []
 
         agent_index = -1
         for i in range(n_centers):
@@ -1652,8 +1644,6 @@ cdef class CMap2D:
             indexmin = int( ( max(phimin, angle_min) - angle_min ) // angle_inc )
             indexmax = int( ( min(phimax, angle_max) - angle_min ) // angle_inc )
 
-            for idx in range(indexmin, indexmax+1):
-                ignore_list.append(idx-indexmin+1)
 
             for idx in range(indexmin, indexmax+1):
                 phi = angles[idx]
@@ -1668,7 +1658,6 @@ cdef class CMap2D:
                 possible_solution_m = possible_solution * self.resolution_ # in meters
                 if possible_solution_m >= 0:
                     min_solution = min(min_solution, possible_solution_m)
-                
                 possible_solution = first_term + np.sqrt(sqrt_inner)
                 possible_solution_m = possible_solution * self.resolution_
                 if possible_solution_m >= 0:
@@ -1680,7 +1669,6 @@ cdef class CMap2D:
                         agent.ood_visible = True 
 
                 ranges[idx] = min_solution
-            ignore_list.clear()
 
         return True
 
@@ -2045,7 +2033,7 @@ cdef class CSimAgent:
     cdef public bool even_visible
     cdef public bool ood_visible
 
-    def __cinit__(self, pose, state, vel, type_="legs", radius=0.03, even_visible = False, ood_visible = False ):
+    def __cinit__(self, pose, state, vel, type_="legs", radius=0.03, even_visible = False, ood_visible = False):
         """ pose: [px, py, th] in map frame
             state: [Dx, Dy, Dth] 'distance travelled' in each dim
             vel: [vx, vy, w] in map frame
@@ -2228,43 +2216,32 @@ cdef crender_contours_in_lidar(
     cdef np.float32_t det
     cdef np.float32_t r
     cdef np.float32_t t
-    for i in range(n_angles):  # for each ray
+
+   # for i in range(n_angles):  # for each ray
+    for i in prange(n_angles, nogil=True):
         angle = angles[i]
         min_range = ranges[i] # initialize with scan range
+        a = ccos(angle)
+        c = csin(angle)
         for v in range(n_total_edges):  # for each edge
-            # discard edge if it connects two different polygons
-            if flat_contours[v, 0] != flat_contours[v+1, 0]:
+            #flat_contour_v = flat_contours[v]
+            #flat_contour_v1 = flat_contours[v + 1]
+#
+            #if flat_contour_v[0] != flat_contour_v1[0]:
+            #    continue
+            #e1x = flat_contour_v[1]
+            #e1y = flat_contour_v[2]
+            #e2x = flat_contour_v1[1]
+            #e2y = flat_contour_v1[2]
+            if flat_contours[v, 0] != flat_contours[v + 1, 0]:
                 continue
-            # get the edge ends
+
             e1x = flat_contours[v, 1]
             e1y = flat_contours[v, 2]
-            e2x = flat_contours[v+1, 1]
-            e2y = flat_contours[v+1, 2]
-            # solve geometrical eq. (for r)
-            # ox + r cos(th) = e1x + t (e2x - e1x)
-            # oy + r sin(th) = e1y + t (e2y - e1y)
-            # constraints: 0 <= t <= 1, r >= 0
-            #
-            #  e1 x             /
-            #      \           /
-            #       \t        /
-            #        \/      /
-            #         \     /
-            #          \   /
-            #           \ /
-            #            \
-            #           / \
-            #          /   \
-            #        _/     x e2
-            #      r /\
-            #       /
-            #      o
-            #
-            # [a, b] [r] = [e]  -> [r] =  1   [d, -b] [e] 
-            # [c, d] [t] = [f]     [t] = det  [-c, a] [f]
-            a = ccos(angle)
+            e2x = flat_contours[v + 1, 1]
+            e2y = flat_contours[v + 1, 2]
+
             b = -(e2x - e1x)
-            c = csin(angle)
             d = -(e2y - e1y)
             e = e1x - ox
             f = e1y - oy
