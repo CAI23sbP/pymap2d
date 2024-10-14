@@ -11,6 +11,7 @@ from math import sqrt
 from libc.math cimport cos as ccos
 from libc.math cimport sin as csin
 from libc.math cimport acos as cacos
+from libc.math cimport atan2 as catan
 from libc.math cimport sqrt as csqrt
 from libc.math cimport floor as cfloor
 from cython.parallel import prange
@@ -20,6 +21,110 @@ from yaml import load, SafeLoader
 from matplotlib.pyplot import imread
 import numpy as np
 
+cdef class DWAController:
+    cdef double min_speed 
+    cdef double max_speed
+    cdef double max_yaw_rate
+    cdef double max_accel
+    cdef double max_delta_yaw_rate
+    cdef double dt
+    cdef double predict_time
+    cdef double v_resolution
+    cdef double yaw_rate_resolution
+    cdef double to_goal_cost_gain
+    cdef double speed_cost_gain
+    cdef double obstacle_cost_gain
+    cdef double robot_stuck_flag_cons
+
+    def __init__(self, double min_speed, double max_speed, double max_yaw_rate, double max_accel, 
+                 double max_delta_yaw_rate, double dt, double predict_time, double v_resolution, 
+                 double yaw_rate_resolution, double to_goal_cost_gain, double speed_cost_gain, 
+                 double obstacle_cost_gain, double robot_stuck_flag_cons):
+        self.min_speed = min_speed
+        self.max_speed = max_speed
+        self.max_yaw_rate = max_yaw_rate
+        self.max_accel = max_accel
+        self.max_delta_yaw_rate = max_delta_yaw_rate
+        self.dt = dt
+        self.predict_time = predict_time
+        self.v_resolution = v_resolution
+        self.yaw_rate_resolution = yaw_rate_resolution
+        self.to_goal_cost_gain = to_goal_cost_gain
+        self.speed_cost_gain = speed_cost_gain
+        self.obstacle_cost_gain = obstacle_cost_gain
+        self.robot_stuck_flag_cons = robot_stuck_flag_cons
+
+    cpdef tuple dwa_control(self, np.ndarray robot_info, np.ndarray goal, np.ndarray ob, np.ndarray radius):
+        dw = self.calc_dynamic_window(robot_info)
+        u, trajectory = self.calc_control_and_trajectory(robot_info, dw, goal, ob, radius)
+        return np.asarray(u), np.asarray(trajectory)
+
+    cdef np.ndarray motion(self, np.ndarray x, np.ndarray u, double dt):
+        x[2] += u[1] * dt
+        x[0] += u[0] * ccos(x[2]) * dt
+        x[1] += u[0] * csin(x[2]) * dt
+        x[3] = u[0]
+        x[4] = u[1]
+        return x
+
+    cdef list calc_dynamic_window(self, np.ndarray x):
+        Vs = [self.min_speed, self.max_speed, -self.max_yaw_rate, self.max_yaw_rate]
+        Vd = [x[3] - self.max_accel * self.dt,
+              x[3] + self.max_accel * self.dt,
+              x[4] - self.max_delta_yaw_rate * self.dt,
+              x[4] + self.max_delta_yaw_rate * self.dt]
+        dw = [max(Vs[0], Vd[0]), min(Vs[1], Vd[1]), max(Vs[2], Vd[2]), min(Vs[3], Vd[3])]
+        return dw
+
+    cdef np.ndarray predict_trajectory(self, np.ndarray x_init, double v, double y):
+        cdef np.ndarray trajectory = np.array(x_init, dtype=np.float64)
+        time = 0
+        cdef np.ndarray x = np.array(x_init, dtype=np.float64)
+        cdef np.ndarray u = np.array([v, y], dtype=np.float64)  
+        while time <= self.predict_time:
+            x = self.motion(x, u, self.dt)
+            trajectory = np.vstack((trajectory, x))
+            time += self.dt
+        return trajectory
+
+    cdef tuple calc_control_and_trajectory(self, np.ndarray x, list dw, np.ndarray goal, np.ndarray ob, np.ndarray radius):
+        cdef double min_cost = float("inf")
+        cdef np.ndarray best_trajectory = np.array([x], dtype=np.float64)
+        cdef double[2] best_u = [0.0, 0.0]
+        cdef np.ndarray trajectory
+
+        for v in np.arange(dw[0], dw[1], self.v_resolution):
+            for y in np.arange(dw[2], dw[3], self.yaw_rate_resolution):
+                trajectory = self.predict_trajectory(x, v, y)
+                to_goal_cost = self.to_goal_cost_gain * self.calc_to_goal_cost(trajectory, goal)
+                speed_cost = self.speed_cost_gain * (self.max_speed - trajectory[-1, 3])
+                ob_cost = self.obstacle_cost_gain * self.calc_obstacle_cost(trajectory, ob, radius)
+
+                final_cost = to_goal_cost + speed_cost + ob_cost
+
+                if min_cost >= final_cost:
+                    min_cost = final_cost
+                    best_u = [v, y]
+                    best_trajectory = trajectory
+                    if abs(best_u[0]) < self.robot_stuck_flag_cons and abs(x[3]) < self.robot_stuck_flag_cons:
+                        best_u[1] = -self.max_delta_yaw_rate
+        return np.asarray(best_u), best_trajectory
+
+    cdef double calc_obstacle_cost(self, np.ndarray trajectory, np.ndarray ob, np.ndarray radius):
+        ox = ob[:, 0]
+        oy = ob[:, 1]
+        dx = trajectory[:, 0] - ox[:, None]
+        dy = trajectory[:, 1] - oy[:, None]
+        r = np.hypot(dx, dy)
+        min_r = np.min(r)
+        return 1.0 / min_r if min_r > 0 else float("inf")
+
+    cdef double calc_to_goal_cost(self, np.ndarray trajectory, np.ndarray goal):
+        dx = goal[0] - trajectory[-1, 0]
+        dy = goal[1] - trajectory[-1, 1]
+        error_angle = catan(dy, dx)
+        cost_angle = error_angle - trajectory[-1, 2]
+        return abs(catan(csin(cost_angle), ccos(cost_angle)))
 
 cdef class OccupancyGridMap:
     cdef double xy_resolution  
@@ -594,31 +699,64 @@ cdef class CMap2D:
             cplus = np.concatenate((c, c[:1]), axis=0)
             plt.plot(cplus[:,0], cplus[:,1], *args, **kwargs)
 
+#    @cython.boundscheck(False)
+#    @cython.wraparound(False)
+#    @cython.nonecheck(False)
+#    @cython.cdivision(True)
+#    cdef cas_sdf(self, np.int64_t[:,::1] occupied_points_ij, np.float32_t[:, ::1] min_distances):
+#        """ everything in ij units """
+#        cdef np.int64_t[:] point
+#        cdef np.int64_t pi
+#        cdef np.int64_t pj
+#        cdef np.float32_t norm
+#        cdef np.int64_t i
+#        cdef np.int64_t j
+#        cdef np.float32_t smallest_dist
+#        cdef int n_occupied_points_ij = len(occupied_points_ij)
+#        for i in range(min_distances.shape[0]):
+#            for j in range(min_distances.shape[1]):
+#                smallest_dist = min_distances[i, j]
+#                for k in range(n_occupied_points_ij):
+#                    point = occupied_points_ij[k]
+#                    pi = point[0]
+#                    pj = point[1]
+#                    norm = csqrt((pi - i) ** 2 + (pj - j) ** 2)
+#                    if norm < smallest_dist:
+#                        smallest_dist = norm
+#                min_distances[i, j] = smallest_dist
     @cython.boundscheck(False)
     @cython.wraparound(False)
     @cython.nonecheck(False)
     @cython.cdivision(True)
-    cdef cas_sdf(self, np.int64_t[:,::1] occupied_points_ij, np.float32_t[:, ::1] min_distances):
+    cdef void cas_sdf(self, np.int64_t[:, ::1] occupied_points_ij, np.float32_t[:, ::1] min_distances):
         """ everything in ij units """
-        cdef np.int64_t[:] point
-        cdef np.int64_t pi
-        cdef np.int64_t pj
-        cdef np.float32_t norm
-        cdef np.int64_t i
-        cdef np.int64_t j
-        cdef np.float32_t smallest_dist
-        cdef int n_occupied_points_ij = len(occupied_points_ij)
-        for i in range(min_distances.shape[0]):
-            for j in range(min_distances.shape[1]):
-                smallest_dist = min_distances[i, j]
+        cdef np.int64_t pi, pj
+        cdef np.float64_t norm_sq, smallest_dist_sq
+        cdef int i, j, k
+        cdef int n_occupied_points_ij = occupied_points_ij.shape[0]
+        cdef int rows = min_distances.shape[0]
+        cdef int cols = min_distances.shape[1]
+
+        # Parallelize the outer loop over 'i' and 'j'
+        for i in prange(rows, nogil=True, schedule='dynamic'):
+            for j in range(cols):
+                # Initialize with the square of the smallest distance
+                smallest_dist_sq = min_distances[i, j] ** 2
+
+                # Compare each occupied point
                 for k in range(n_occupied_points_ij):
-                    point = occupied_points_ij[k]
-                    pi = point[0]
-                    pj = point[1]
-                    norm = csqrt((pi - i) ** 2 + (pj - j) ** 2)
-                    if norm < smallest_dist:
-                        smallest_dist = norm
-                min_distances[i, j] = smallest_dist
+                    # Use direct indexing with memoryview to avoid Python object coercion
+                    pi = occupied_points_ij[k, 0]
+                    pj = occupied_points_ij[k, 1]
+                    norm_sq = (pi - i) ** 2 + (pj - j) ** 2
+
+                    # If the squared distance is smaller, update the smallest distance
+                    if norm_sq < smallest_dist_sq:
+                        smallest_dist_sq = norm_sq
+
+                # Store the actual distance (taking sqrt only at the end)
+                min_distances[i, j] = csqrt(smallest_dist_sq)
+
 
     def distance_transform_2d(self):
         f = np.zeros_like(self.occupancy(), dtype=np.float32)
@@ -2224,15 +2362,6 @@ cdef crender_contours_in_lidar(
         a = ccos(angle)
         c = csin(angle)
         for v in range(n_total_edges):  # for each edge
-            #flat_contour_v = flat_contours[v]
-            #flat_contour_v1 = flat_contours[v + 1]
-#
-            #if flat_contour_v[0] != flat_contour_v1[0]:
-            #    continue
-            #e1x = flat_contour_v[1]
-            #e1y = flat_contour_v[2]
-            #e2x = flat_contour_v1[1]
-            #e2y = flat_contour_v1[2]
             if flat_contours[v, 0] != flat_contours[v + 1, 0]:
                 continue
 
@@ -2262,31 +2391,6 @@ cdef crender_contours_in_lidar(
     return True
 
 
-@cython.boundscheck(False)
-@cython.wraparound(False)
-@cython.nonecheck(False)
-@cython.cdivision(True)
-cdef cas_sdf(self, np.int64_t[:,::1] occupied_points_ij, np.float32_t[:, ::1] min_distances):
-    """ everything in ij units """
-    cdef np.int64_t[:] point
-    cdef np.int64_t pi
-    cdef np.int64_t pj
-    cdef np.float32_t norm
-    cdef np.int64_t i
-    cdef np.int64_t j
-    cdef np.float32_t smallest_dist
-    cdef int n_occupied_points_ij = len(occupied_points_ij)
-    for i in range(min_distances.shape[0]):
-        for j in range(min_distances.shape[1]):
-            smallest_dist = min_distances[i, j]
-            for k in range(n_occupied_points_ij):
-                point = occupied_points_ij[k]
-                pi = point[0]
-                pj = point[1]
-                norm = csqrt((pi - i) ** 2 + (pj - j) ** 2)
-                if norm < smallest_dist:
-                    smallest_dist = norm
-            min_distances[i, j] = smallest_dist
 
 cdef cdistance_transform_1d(np.float32_t[::1] f, np.float32_t[::1] D):
     """ based on 'Distance Transforms of Sampled Functions' by Felzenswalb et al """
