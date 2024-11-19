@@ -99,7 +99,6 @@ cdef class DWAController:
                 to_goal_cost = self.to_goal_cost_gain * self.calc_to_goal_cost(trajectory, goal)
                 speed_cost = self.speed_cost_gain * (self.max_speed - trajectory[-1, 3])
                 ob_cost = self.obstacle_cost_gain * self.calc_obstacle_cost(trajectory, ob, radius)
-
                 final_cost = to_goal_cost + speed_cost + ob_cost
 
                 if min_cost >= final_cost:
@@ -129,11 +128,15 @@ cdef class DWAController:
 cdef class OccupancyGridMap:
     cdef double xy_resolution  
     cdef double map_size  
-
-    def __init__(self, double xy_resolution = 0.05, map_size = 11.2 ):
+    cdef double range_max  
+    cdef bool using_detector
+    cdef double detect_value
+    def __init__(self, double xy_resolution = 0.05, map_size = 11.2 , range_max= 5.0, using_detector= False, detect_value = 100.0):
         self.xy_resolution = xy_resolution
         self.map_size = map_size
-
+        self.range_max = range_max
+        self.using_detector = using_detector
+        self.detect_value = detect_value
     @cython.boundscheck(False)
     @cython.wraparound(False)
     cdef np.ndarray[int, ndim=2] bresenham(self, tuple start, tuple end):
@@ -265,7 +268,11 @@ cdef class OccupancyGridMap:
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
-    cpdef generate_ray_casting_grid_map(self, np.ndarray[double, ndim=1] ranges, np.ndarray[double, ndim=1] angles):
+    cpdef generate_ray_casting_grid_map(self, 
+                                        np.ndarray[double, ndim=1] ranges, 
+                                        np.ndarray[double, ndim=1] angles,
+                                        np.ndarray[bool, ndim=1] visible_indices, 
+                                        ):
         cdef:
             double min_x, min_y, max_x, max_y
             int x_w, y_w, ix, iy
@@ -287,15 +294,45 @@ cdef class OccupancyGridMap:
         occupancy_map = self.init_flood_fill(center_point, obstacle_points, xy_points, min_coord)
         self.flood_fill((center_x, center_y), occupancy_map)
         occupancy_map = np.array(occupancy_map, dtype=np.float64)
-        for i in range(len(ox)):
-            x, y = ox[i], oy[i]
-            ix = int(round((x - min_x) / self.xy_resolution))
-            iy = int(round((y - min_y) / self.xy_resolution))
-            occupancy_map[ix, iy] = 1.0
-            occupancy_map[ix + 1, iy] = 1.0
-            occupancy_map[ix, iy + 1] = 1.0
-            occupancy_map[ix + 1, iy + 1] = 1.0
 
+        if self.using_detector:
+            for i in range(len(ox)):
+                x, y = ox[i], oy[i]
+                distance = ranges[i]
+                ix = int(round((x - min_x) / self.xy_resolution))
+                iy = int(round((y - min_y) / self.xy_resolution))
+                if distance < self.range_max:  # If within the range, mark as occupied
+                    if visible_indices[i]:
+                        occupancy_map[ix, iy] = self.detect_value
+                        occupancy_map[ix + 1, iy] = self.detect_value
+                        occupancy_map[ix, iy + 1] = self.detect_value
+                        occupancy_map[ix + 1, iy + 1] = self.detect_value
+                    else:
+                        occupancy_map[ix, iy] = 1.0
+                        occupancy_map[ix + 1, iy] = 1.0
+                        occupancy_map[ix, iy + 1] = 1.0
+                        occupancy_map[ix + 1, iy + 1] = 1.0
+                else:  # If at the edge of the sensor range, mark as uncertain
+                    occupancy_map[ix, iy] = 0.5
+                    occupancy_map[ix + 1, iy] = 0.5
+                    occupancy_map[ix, iy + 1] = 0.5
+                    occupancy_map[ix + 1, iy + 1] = 0.5
+        else:
+            for i in range(len(ox)):
+                x, y = ox[i], oy[i]
+                distance = ranges[i]
+                ix = int(round((x - min_x) / self.xy_resolution))
+                iy = int(round((y - min_y) / self.xy_resolution))
+                if distance < self.range_max:  # If within the range, mark as occupied
+                    occupancy_map[ix, iy] = 1.0
+                    occupancy_map[ix + 1, iy] = 1.0
+                    occupancy_map[ix, iy + 1] = 1.0
+                    occupancy_map[ix + 1, iy + 1] = 1.0
+                else:  # If at the edge of the sensor range, mark as uncertain
+                    occupancy_map[ix, iy] = 0.5
+                    occupancy_map[ix + 1, iy] = 0.5
+                    occupancy_map[ix, iy + 1] = 0.5
+                    occupancy_map[ix + 1, iy + 1] = 0.5
         return occupancy_map
 
 
@@ -470,6 +507,7 @@ cdef class CMap2D:
         self.HUGE_ = 100 * self.occupancy_shape0 * self.occupancy_shape1
         if self.resolution_ == 0:
             raise ValueError("resolution can not be 0")
+
 
     def from_array(self, occupancy, origin, resolution, thresh_free=0.1, thresh_occupied=0.9):
         """ Ideally this would be the default constructor (for legacy reasons loading from file is kept)
@@ -1667,8 +1705,8 @@ cdef class CMap2D:
                         ranges[a, idx, lr] = min_solution
         return True
 
-    def render_agents_in_lidar(self, ranges, angles, agents, lidar_ij):
-        if not self.crender_agents_in_lidar(ranges, angles.astype(np.float32), agents, lidar_ij.astype(np.float32)):
+    def render_agents_in_lidar(self, ranges, angles, agents, lidar_ij, visible_indices):
+        if not self.crender_agents_in_lidar(ranges, angles.astype(np.float32), agents, lidar_ij.astype(np.float32), visible_indices):
             self.old_render_agents_in_lidar(ranges, angles, agents, lidar_ij)
 
     @cython.boundscheck(False)
@@ -1680,6 +1718,7 @@ cdef class CMap2D:
             np.ndarray[np.float32_t, ndim=1] angles,
             agents,
             np.ndarray[np.float32_t, ndim=1] lidar_ij,
+            np.ndarray[bool, ndim=1] visible_indices
             ):
         """ Takes a list of agents (shapes + position) and renders them into the occupancy grid
         assumes the angles are ordered from lowest to highest, spaced evenly (const increment)
@@ -1801,13 +1840,13 @@ cdef class CMap2D:
                 if possible_solution_m >= 0:
                     min_solution = min(min_solution, possible_solution_m)
                 if min_solution < ranges[idx]: # ignoring small indx range -> can't detect which is human's leg or not
+                    visible_indices[idx] = True
                     if i % 2 == 0:
                         agent.even_visible = True 
                     else:
                         agent.ood_visible = True 
 
                 ranges[idx] = min_solution
-
         return True
 
     def visibility_map(self, observer_ij, fov=None):
@@ -2271,7 +2310,6 @@ cdef class CSimAgent:
         m_a_T = self.pose_2d_in_map_frame
         vel_norm = np.sqrt(self.vel_in_map_frame[0]**2 + self.vel_in_map_frame[1]**2)
         if self.type == "legs":
-            leg_radius = self.leg_radius # [m]
             leg_side_offset = 0.1 # [m]
             leg_side_amplitude = 0.1 # [m] half amplitude
             leg_front_amplitude = max(0.01, min(0.3, # [m]
