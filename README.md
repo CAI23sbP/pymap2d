@@ -104,6 +104,31 @@ class MYClass():
 ```
 
 
+### 4. Add Occupancy Grid Map with detector (Local Map)
+
+apply pedestrian detector 
+
+If when you want to use this in real env, using this [repo](https://github.com/VisualComputingInstitute/2D_lidar_person_detection)
+
+
+![image](https://github.com/user-attachments/assets/bb380c63-dd22-454f-967b-28fa895840b0)
+
+
+```
+class MYClass():
+    def __init__(self):
+        self.occ_map = OccupancyGridMap(xy_resolution = 0.05, map_size = 11.2, using_detector = True, detect_value = 200.0)
+
+    def lidar_to_occ(self, ranges: np.ndarray, angles: np.ndarray, visible_indices: np.ndarray ) -> np.ndarray:
+        occ = self.occ_map.generate_ray_casting_grid_map(ranges.astype(np.double), angles.astype(np.double), visible_indices.astype(np.bool_)
+        return occ
+
+    def visualize_occ(self, ranges: np.ndarray , angles: np.ndarray) -> np.ndarray:
+        occ = self.lidar_to_occ(ranges, angles)
+        cv2.imshow('occ_map', occ)
+        cv2.waitkey(1)
+```
+
 # pymap2d
 
 pymap2d is a Cython-based fast toolbox for 2d grid maps.
